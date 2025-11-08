@@ -172,155 +172,167 @@ function webUpdateReportingLine(userEmail, newSupervisorEmail) {
 // ==========================================================
 
 /**
- * (REPLACED)
- * Saves a new coaching session and its detailed scores.
- * Matches the new frontend form.
- */
+ * (REPLACED FOR DYNAMIC TEMPLATES - PHASE 4)
+ * Saves a new coaching session and its detailed scores from any template.
+ */
 function webSubmitCoaching(sessionObject) {
-  try {
-    const ss = getSpreadsheet();
-    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
-    const userData = getUserDataFromDb(dbSheet);
-    const sessionSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
-    const scoreSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingScores);
-    
-    const coachEmail = Session.getActiveUser().getEmail().toLowerCase();
-    const coachName = userData.emailToName[coachEmail] || coachEmail;
-    
-    // Simple validation
-    if (!sessionObject.agentEmail || !sessionObject.sessionDate) {
-      throw new Error("Agent and Session Date are required.");
-    }
+  try {
+    const ss = getSpreadsheet();
+    const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
+    const userData = getUserDataFromDb(dbSheet);
+    const sessionSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
+    const scoreSheet = getOrCreateSheet(ss, "CoachingScores_V2"); // Use the NEW scores sheet
 
-    const agentName = userData.emailToName[sessionObject.agentEmail.toLowerCase()];
-    if (!agentName) {
-      throw new Error(`Could not find agent with email ${sessionObject.agentEmail}.`);
-    }
+    const coachEmail = Session.getActiveUser().getEmail().toLowerCase();
+    const coachName = userData.emailToName[coachEmail] || coachEmail;
 
-    const sessionID = `CS-${new Date().getTime()}`; // Simple unique ID
-    const sessionDate = new Date(sessionObject.sessionDate + 'T00:00:00');
-    // *** NEW: Handle FollowUpDate ***
-    const followUpDate = sessionObject.followUpDate ? new Date(sessionObject.followUpDate + 'T00:00:00') : null;
-    const followUpStatus = followUpDate ? "Pending" : ""; // Set to pending if date exists
+    // 1. Validation
+    if (!sessionObject.agentEmail || !sessionObject.sessionDate || !sessionObject.templateID) {
+      throw new Error("Agent, Session Date, and TemplateID are required.");
+    }
 
-    // 1. Log the main session
-    sessionSheet.appendRow([
-      sessionID,
-      sessionObject.agentEmail,
-      agentName,
-      coachEmail,
-      coachName,
-      sessionDate,
-      sessionObject.weekNumber,
-      sessionObject.overallScore,
-      sessionObject.followUpComment,
-      new Date(), // Timestamp of submission
-      followUpDate || "", // *** NEW: Add follow-up date ***
-      followUpStatus  // *** NEW: Add follow-up status ***
-    ]);
+    const agentName = userData.emailToName[sessionObject.agentEmail.toLowerCase()];
+    if (!agentName) {
+      throw new Error(`Could not find agent with email ${sessionObject.agentEmail}.`);
+    }
 
-    // 2. Log the individual scores
-    const scoresToLog = [];
-    if (sessionObject.scores && Array.isArray(sessionObject.scores)) {
-      sessionObject.scores.forEach(score => {
-        scoresToLog.push([
-          sessionID,
-          score.category,
-          score.criteria,
-          score.score,
-          score.comment
-        ]);
-      });
-    }
+    const sessionID = `CS-${new Date().getTime()}`; // Simple unique ID
+    const sessionDate = new Date(sessionObject.sessionDate + 'T00:00:00');
+    const followUpDate = sessionObject.followUpDate ? new Date(sessionObject.followUpDate + 'T00:00:00') : null;
+    const followUpStatus = followUpDate ? "Pending" : "";
 
-    if (scoresToLog.length > 0) {
-      scoreSheet.getRange(scoreSheet.getLastRow() + 1, 1, scoresToLog.length, 5).setValues(scoresToLog);
-    }
-    
-    return `Coaching session for ${agentName} saved successfully.`;
+    // 2. Log the main session
+    sessionSheet.appendRow([
+      sessionID,
+      sessionObject.agentEmail,
+      agentName,
+      coachEmail,
+      coachName,
+      sessionDate,
+      sessionObject.weekNumber,
+      sessionObject.overallScore, // Pass calculated score from client
+      sessionObject.followUpComment,
+      new Date(), // Timestamp of submission
+      followUpDate || "", 
+      followUpStatus,
+      sessionObject.templateID // NEW: Save the TemplateID
+    ]);
 
-  } catch (err) {
-    Logger.log("webSubmitCoaching Error: " + err.message);
-    return "Error: " + err.message;
-  }
+    // 3. Log the individual scores to V2 sheet
+    const scoresToLog = [];
+    if (sessionObject.scores && Array.isArray(sessionObject.scores)) {
+      sessionObject.scores.forEach(score => {
+        scoresToLog.push([
+          sessionID,
+          score.itemID,
+          score.scoreValue,
+          score.commentText,
+          sessionObject.templateID
+        ]);
+      });
+    }
+
+    if (scoresToLog.length > 0) {
+      scoreSheet.getRange(scoreSheet.getLastRow() + 1, 1, scoresToLog.length, 5).setValues(scoresToLog);
+    }
+
+    return `Coaching session for ${agentName} saved successfully.`;
+
+  } catch (err) {
+    Logger.log("webSubmitCoaching Error: " + err.message);
+    return "Error: " + err.message;
+  }
 }
 
 /**
- * (REPLACED)
- * Gets coaching history for the logged-in user or their team.
- * Reads from the new CoachingSessions sheet.
- * *** MODIFIED FOR POINT 6 (Coaching Export) ***
+ * (REPLACED FOR DYNAMIC TEMPLATES - PHASE 4)
+ * Gets coaching history and joins scores from the V2 tables.
  */
-function webGetCoachingHistory(filter) { // filter is unused for now, but good practice
+function webGetCoachingHistory(filter) {
   try {
     const userEmail = Session.getActiveUser().getEmail().toLowerCase();
     const ss = getSpreadsheet();
     const dbSheet = getOrCreateSheet(ss, SHEET_NAMES.database);
     const userData = getUserDataFromDb(dbSheet);
     const role = userData.emailToRole[userEmail] || 'agent';
-    const sheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
 
-    // Get all session data as objects
-    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    const allData = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-
-    // *** NEW (Point 6): Get all detailed scores and map them ***
-    const scoreSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingScores);
-    const allScoresData = scoreSheet.getRange(2, 1, scoreSheet.getLastRow() - 1, 5).getValues();
-    const scoresMap = {};
-    for (let i = 0; i < allScoresData.length; i++) {
-        const scoreRow = allScoresData[i];
-        const sessionID = scoreRow[0];
-        if (!scoresMap[sessionID]) {
-            scoresMap[sessionID] = [];
-        }
-        scoresMap[sessionID].push({
-            category: scoreRow[1],
-            criteria: scoreRow[2],
-            score: scoreRow[3],
-            comment: scoreRow[4]
-        });
+    // --- 1. Get Template Criteria Definitions ---
+    // We need this to provide context (category, criteria text) for each score
+    const criteriaSheet = getOrCreateSheet(ss, "CoachingTemplateCriteria");
+    const criteriaData = criteriaSheet.getRange(2, 1, criteriaSheet.getLastRow() - 1, 7).getValues();
+    const criteriaMap = {}; // Key: ItemID, Value: { category, criteriaText, ... }
+    for (let i = 0; i < criteriaData.length; i++) {
+      const row = criteriaData[i];
+      criteriaMap[row[1]] = { // row[1] is ItemID
+        templateID: row[0],
+        itemID: row[1],
+        category: row[2],
+        criteriaText: row[3],
+        inputType: row[4],
+        weight: row[5]
+      };
     }
-    // **********************************************************
+
+    // --- 2. Get All Scores from V2 Sheet ---
+    const scoreSheet = getOrCreateSheet(ss, "CoachingScores_V2");
+    const allScoresData = scoreSheet.getRange(2, 1, scoreSheet.getLastRow() - 1, 5).getValues();
+    const scoresMap = {}; // Key: SessionID, Value: [ { score details } ]
+    for (let i = 0; i < allScoresData.length; i++) {
+      const row = allScoresData[i];
+      const sessionID = row[0];
+      const itemID = row[1];
+      const scoreValue = row[2];
+      const commentText = row[3];
+
+      if (!scoresMap[sessionID]) {
+        scoresMap[sessionID] = [];
+      }
+
+      // Join score with its definition from the criteriaMap
+      const criteriaDef = criteriaMap[itemID] || {};
+      scoresMap[sessionID].push({
+        itemID: itemID,
+        scoreValue: scoreValue,
+        commentText: commentText,
+        category: criteriaDef.category || 'Unknown Category',
+        criteriaText: criteriaDef.criteriaText || 'Unknown Criteria'
+        // We use the '||' to prevent errors if a template was deleted
+      });
+    }
+
+    // --- 3. Get All Session Headers ---
+    const sessionSheet = getOrCreateSheet(ss, SHEET_NAMES.coachingSessions);
+    const headers = sessionSheet.getRange(1, 1, 1, sessionSheet.getLastColumn()).getValues()[0];
+    const allData = sessionSheet.getRange(2, 1, sessionSheet.getLastRow() - 1, sessionSheet.getLastColumn()).getValues();
 
     const allSessions = allData.map(row => {
       let obj = {};
       headers.forEach((header, index) => {
         obj[header] = row[index];
       });
-      // *** NEW (Point 6): Attach detailed scores to the session object ***
+      // Attach the detailed scores we just mapped
       obj['scores'] = scoresMap[obj['SessionID']] || [];
-      // ****************************************************************
       return obj;
     });
 
+    // --- 4. Filter Sessions for the current user ---
     const results = [];
-
-    // Get a list of users this person manages (if they are a manager)
     let myTeamEmails = new Set();
     if (role === 'admin' || role === 'superadmin') {
-      // Use the hierarchy-aware function
       const myTeamList = webGetAllSubordinateEmails(userEmail);
       myTeamList.forEach(email => myTeamEmails.add(email.toLowerCase()));
     }
 
-    for (let i = allSessions.length - 1; i >= 0; i--) { // Go backwards from allSessions.length - 1, and include i=0
+    for (let i = allSessions.length - 1; i >= 0; i--) {
       const session = allSessions[i];
-      if (!session || !session.AgentEmail) continue; // Skip empty/invalid rows
+      if (!session || !session.AgentEmail) continue;
 
       const agentEmail = session.AgentEmail.toLowerCase();
-
       let canView = false;
-      if (role === 'agent' && agentEmail === userEmail) {
-        // An agent can see their own
-        canView = true;
-      } else if (role === 'admin' && myTeamEmails.has(agentEmail)) {
-        // An admin can see their team's
-        canView = true;
-      } else if (role === 'superadmin') {
-        // Superadmin can see all
-        canView = true;
-      }
+
+      if (role === 'agent' && agentEmail === userEmail) canView = true;
+      else if (role === 'admin' && myTeamEmails.has(agentEmail)) canView = true;
+      else if (role === 'superadmin') canView = true;
 
       if (canView) {
         results.push({
@@ -331,12 +343,10 @@ function webGetCoachingHistory(filter) { // filter is unused for now, but good p
           weekNumber: session.WeekNumber,
           overallScore: session.OverallScore,
           followUpComment: session.FollowUpComment,
-          // *** NEW: Return follow-up info ***
           followUpDate: convertDateToString(new Date(session.FollowUpDate)),
           followUpStatus: session.FollowUpStatus,
-          // *** NEW (Point 6): Return detailed scores ***
-          scores: session.scores 
-          // ********************************************
+          templateID: session.TemplateID, // Send TemplateID to frontend
+          scores: session.scores // Send the fully-detailed scores
         });
       }
     }
