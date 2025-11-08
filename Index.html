@@ -1633,6 +1633,12 @@
               <label for="coaching-agent-select">Select User</label>
               <select id="coaching-agent-select" required></select>
             </div>
+            <div class="form-group">
+              <label for="coaching-template-select">Select Coaching Template</label>
+              <select id="coaching-template-select" onchange="onCoachingTemplateChange()">
+                <option value="">-- Select a template --</option>
+              </select>
+            </div>
             <div class="form-row">
               <div class="form-group">
                 <label for="coaching-session-date">Session Date</label>
@@ -1689,52 +1695,100 @@
         <!--    NEW TAB 10: COACHING PANEL      -->
         <!-- ================================== -->
           <div id="coaching-admin-panel" class="tab-panel">
+
             <h2>Coaching Template Manager</h2>
 
+
+
             <div class="form-container">
+
               <div class="form-row">
+
                 <div class="form-group" style="flex: 2;">
+
                   <label for="template-select">Load Existing Template</label>
+
                   <select id="template-select" onchange="onTemplateSelectChange()">
+
                     <option value="">-- Load a template to edit --</option>
+
                   </select>
+
                 </div>
+
                 <div class="form-group" style="flex: 1;">
+
                    <label>&nbsp;</label>
+
                    <button type="button" class="submit-btn-green" onclick="createNewTemplate()">Create New Template</button>
+
                 </div>
+
               </div>
+
             </div>
+
+
 
             <hr class="section-divider">
 
+
+
             <form id="template-builder-form" class="form-container" style="display: none;">
+
               <h3>Template Builder</h3>
+
               <input type="hidden" id="template-id-input"> <div class="form-group">
+
                 <label for="template-name-input">Template Name</label>
+
                 <input type="text" id="template-name-input" placeholder="e.g., 'Weekly Quality Score' or 'Sales Skills'">
+
               </div>
+
+
 
               <div id="template-criteria-builder">
+
                 <p class="text-color-secondary">Add your first category to begin.</p>
+
               </div>
+
+
 
               <button type="button" style="background-color:var(--konecta-blue)" onclick="addTemplateCategory()">Add Category</button>
+
               <hr class="section-divider">
 
+
+
               <div class="form-row">
+
                 <button type="button" class="submit-btn-green" style="flex: 2;" onclick="saveTemplate()">Save Template</button>
+
                 <button type="button" class="deny-btn" style="flex: 1;" onclick="deleteTemplate()">Delete Template</button>
+
               </div>
+
+
 
             </form>
 
+
+
             <div id="coaching-admin-status" class="status-message"></div>
+
+
 
           </div>
 
 
-          </div> 
+
+
+
+          </div>
+
+
           </main>
           <!-- End .card -->
 
@@ -1890,9 +1944,40 @@
                // Re-draw on tab switch to apply theme/resize changes
                drawDashboard(window.lastDashboardData);
            }
-        // ADD THIS NEW BLOCK
         } else if (tabName === 'coaching') {
-          loadMyCoaching(); // <-- Use the new function name
+          // --- THIS IS THE CORRECTED BLOCK ---
+          loadMyCoaching(); // This loads the history list
+
+          // Load templates into the "Submit" form dropdown
+          const templateSelect = document.getElementById('coaching-template-select');
+          
+          // Only load if not already loaded (options.length <= 1 means only the default "-- Select --" is there)
+          if (templateSelect && templateSelect.options.length <= 1) { 
+            templateSelect.innerHTML = '<option value="">-- Loading templates... --</option>';
+            
+            // Check if we already have templates from the admin tab
+            if (allTemplates && allTemplates.length > 0) {
+              console.log("Using cached templates for coaching form.");
+              populateTemplateDropdown(allTemplates);
+            } else {
+              // If not, fetch them
+              console.log("Fetching templates for coaching form...");
+              google.script.run
+                .withSuccessHandler(templates => {
+                  if (templates && !templates.error) {
+                    allTemplates = templates; // Save to global state
+                    populateTemplateDropdown(templates);
+                  } else {
+                    templateSelect.innerHTML = '<option value="">-- Error loading templates --</option>';
+                  }
+                })
+                .withFailureHandler(err => {
+                    templateSelect.innerHTML = '<option value="">-- Error loading templates --</option>';
+                })
+                .webGetCoachingTemplates();
+            }
+          }
+          // --- END OF CORRECTED BLOCK ---
         }
       }
       
@@ -3966,7 +4051,18 @@
       // ==========================================================
       // === NEW COACHING TEMPLATE FUNCTIONS (PHASE 3) ===
       // ==========================================================
+      function populateTemplateDropdown(templates) {
+        const templateSelect = document.getElementById('coaching-template-select');
+        if (!templateSelect) return; // Safety check
 
+        templateSelect.innerHTML = '<option value="">-- Select a template --</option>';
+        templates.forEach(t => {
+          const option = document.createElement('option');
+          option.value = t.templateID;
+          option.textContent = t.templateName;
+          templateSelect.appendChild(option);
+        });
+      }
       /**
        * Called when the "Coaching Admin" tab is shown, or on page load
        */
@@ -3997,7 +4093,24 @@
           })
           .webGetCoachingTemplates();
       }
+       /**
+       * (NEW HELPER FUNCTION)
+       * Populates the coaching submission template dropdown
+       */
+      function populateTemplateDropdown(templates) {
+        const templateSelect = document.getElementById('coaching-template-select');
+        if (!templateSelect) return; // Safety check
 
+        templateSelect.innerHTML = '<option value="">-- Select a template --</option>';
+        templates.forEach(t => {
+          const option = document.createElement('option');
+          option.value = t.templateID;
+          option.textContent = t.templateName;
+          templateSelect.appendChild(option);
+        });
+      }
+
+     
       /**
        * Clears the form and shows it to create a new template
        */
